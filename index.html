@@ -1,10 +1,101 @@
 <html>
   <head>
-    <title>Tikrack</title>
+    <title>Tikrack API</title>
   </head>
   <body>
-    <h1>Serivices -> Tikrack</h1>
+    <script>
+      // API Response Handler
+      function sendResponse(data, status = 200) {
+        const response = {
+          status: status,
+          data: data,
+          timestamp: new Date().toISOString()
+        };
+        
+        // For actual API usage, you might want to:
+        // 1. Return JSON for fetch requests
+        // 2. Display response in browser for testing
+        if (window.API_DEBUG_MODE) {
+          document.body.innerHTML = `<pre>${JSON.stringify(response, null, 2)}</pre>`;
+        }
+        
+        return new Response(JSON.stringify(response), {
+          status: status,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          }
+        });
+      }
 
-    <script src="https://tikrack.github.io/services/index.js"></script>
+      // Service Handlers
+      const services = {
+        TelegramSendBot: async (params) => {
+          try {
+            // Validate required parameters
+            if (!params.token) throw new Error('Token is required');
+            if (!params.chat_id) throw new Error('Chat ID is required');
+            if (!params.text) throw new Error('Text is required');
+
+            // Encode all parameters
+            const encodedParams = new URLSearchParams();
+            encodedParams.append('token', params.token);
+            encodedParams.append('id', params.chat_id);
+            encodedParams.append('text', params.text);
+
+            // Make the request to Telegram service
+            const telegramUrl = `https://telegram-send-js2.tikrackcode.workers.dev/?${encodedParams.toString()}`;
+            const response = await fetch(telegramUrl);
+            
+            if (!response.ok) {
+              throw new Error(`Telegram service responded with status ${response.status}`);
+            }
+
+            const data = await response.json();
+            return sendResponse(data);
+          } catch (error) {
+            return sendResponse({ error: error.message }, 400);
+          }
+        }
+      };
+
+      // Main API Handler
+      async function handleAPIRequest() {
+        try {
+          // Parse query parameters
+          const params = Object.fromEntries(new URLSearchParams(window.location.search));
+          
+          // Check if service is specified
+          if (!params.service) {
+            return sendResponse({ error: 'No service specified', available_services: Object.keys(services) }, 400);
+          }
+
+          // Check if service exists
+          if (!services[params.service]) {
+            return sendResponse({ error: 'Service not found', available_services: Object.keys(services) }, 404);
+          }
+
+          // Execute the service
+          return await services[params.service](params);
+        } catch (error) {
+          return sendResponse({ error: 'Internal server error', details: error.message }, 500);
+        }
+      }
+
+      // Start the API when page loads
+      document.addEventListener('DOMContentLoaded', async () => {
+        // Enable debug mode if 'debug' parameter exists
+        window.API_DEBUG_MODE = new URLSearchParams(window.location.search).has('debug');
+        
+        // Handle the API request
+        const response = await handleAPIRequest();
+        
+        // For browser testing (not needed in actual API)
+        if (window.API_DEBUG_MODE) {
+          const data = await response.clone().json();
+          document.body.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+        }
+      });
+    </script>
   </body>
 </html>
