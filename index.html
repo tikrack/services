@@ -1,99 +1,137 @@
 <html>
   <head>
     <title>Tikrack API</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 20px; }
+      pre { background: #f4f4f4; padding: 10px; border-radius: 5px; }
+    </style>
   </head>
   <body>
     <script>
-      // API Response Handler
-      function sendResponse(data, status = 200) {
-        const response = {
-          status: status,
-          data: data,
+      // تنظیمات اصلی API
+      const API_CONFIG = {
+        debug: new URLSearchParams(window.location.search).has('debug'),
+        defaultResponseType: 'json'
+      };
+
+      // تابع برای ایجاد پاسخ استاندارد JSON
+      function createJsonResponse(data, status = 200) {
+        const responseData = {
+          status,
+          success: status >= 200 && status < 300,
+          data,
           timestamp: new Date().toISOString()
         };
-        
-        // For actual API usage, you might want to:
-        // 1. Return JSON for fetch requests
-        // 2. Display response in browser for testing
-        if (window.API_DEBUG_MODE) {
-          document.body.innerHTML = `<pre>${JSON.stringify(response, null, 2)}</pre>`;
+
+        if (API_CONFIG.debug) {
+          document.body.innerHTML = `
+            <h1>API Debug Mode</h1>
+            <h2>Response:</h2>
+            <pre>${JSON.stringify(responseData, null, 2)}</pre>
+            <h2>Request Parameters:</h2>
+            <pre>${JSON.stringify(Object.fromEntries(new URLSearchParams(window.location.search)), null, 2)}</pre>
+          `;
         }
-        
-        return new Response(JSON.stringify(response), {
-          status: status,
+
+        return new Response(JSON.stringify(responseData), {
+          status,
           headers: {
             'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
+            'Access-Control-Allow-Origin': '*',
+            'X-API-Version': '1.0'
           }
         });
       }
 
-      // Service Handlers
-      const services = {
+      // سرویس‌های موجود در API
+      const API_SERVICES = {
         TelegramSendBot: async (params) => {
           try {
-            // Validate required parameters
-            if (!params.token) throw new Error('Token is required');
-            if (!params.chat_id) throw new Error('Chat ID is required');
-            if (!params.text) throw new Error('Text is required');
-
-            // Encode all parameters
-            const encodedParams = new URLSearchParams();
-            encodedParams.append('token', params.token);
-            encodedParams.append('id', params.chat_id);
-            encodedParams.append('text', params.text);
-
-            // Make the request to Telegram service
-            const telegramUrl = `https://telegram-send-js2.tikrackcode.workers.dev/?${encodedParams.toString()}`;
-            const response = await fetch(telegramUrl);
+            // اعتبارسنجی پارامترهای ضروری
+            const requiredParams = ['token', 'chat_id', 'text'];
+            const missingParams = requiredParams.filter(p => !params[p]);
             
-            if (!response.ok) {
-              throw new Error(`Telegram service responded with status ${response.status}`);
+            if (missingParams.length > 0) {
+              throw new Error(`Missing required parameters: ${missingParams.join(', ')}`);
             }
 
-            const data = await response.json();
-            return sendResponse(data);
+            // ساخت URL درخواست به تلگرام
+            const telegramUrl = new URL('https://telegram-send-js2.tikrackcode.workers.dev');
+            telegramUrl.searchParams.append('token', params.token);
+            telegramUrl.searchParams.append('id', params.chat_id);
+            telegramUrl.searchParams.append('text', params.text);
+
+            // ارسال درخواست به سرویس تلگرام
+            const response = await fetch(telegramUrl.toString());
+            const responseData = await response.json();
+
+            if (!response.ok) {
+              throw new Error(responseData.error || 'Unknown error from Telegram service');
+            }
+
+            return createJsonResponse({
+              message: 'Message sent successfully',
+              telegram_response: responseData
+            });
           } catch (error) {
-            return sendResponse({ error: error.message }, 400);
+            return createJsonResponse({
+              error: error.message,
+              details: 'Failed to send Telegram message'
+            }, 400);
           }
+        },
+
+        // می‌توانید سرویس‌های دیگر را اینجا اضافه کنید
+        TestService: async () => {
+          return createJsonResponse({
+            message: 'Test service works!',
+            services_available: Object.keys(API_SERVICES)
+          });
         }
       };
 
-      // Main API Handler
-      async function handleAPIRequest() {
+      // تابع اصلی پردازش درخواست‌های API
+      async function handleApiRequest() {
+        const params = Object.fromEntries(new URLSearchParams(window.location.search));
+
+        // اگر سرویس مشخص نشده باشد
+        if (!params.service) {
+          return createJsonResponse({
+            error: 'No service specified',
+            available_services: Object.keys(API_SERVICES),
+            usage_example: '/?service=TelegramSendBot&token=XXX&chat_id=YYY&text=Hello'
+          }, 400);
+        }
+
+        // اگر سرویس وجود نداشته باشد
+        if (!API_SERVICES[params.service]) {
+          return createJsonResponse({
+            error: `Service '${params.service}' not found`,
+            available_services: Object.keys(API_SERVICES)
+          }, 404);
+        }
+
+        // اجرای سرویس مورد نظر
         try {
-          // Parse query parameters
-          const params = Object.fromEntries(new URLSearchParams(window.location.search));
-          
-          // Check if service is specified
-          if (!params.service) {
-            return sendResponse({ error: 'No service specified', available_services: Object.keys(services) }, 400);
-          }
-
-          // Check if service exists
-          if (!services[params.service]) {
-            return sendResponse({ error: 'Service not found', available_services: Object.keys(services) }, 404);
-          }
-
-          // Execute the service
-          return await services[params.service](params);
+          return await API_SERVICES[params.service](params);
         } catch (error) {
-          return sendResponse({ error: 'Internal server error', details: error.message }, 500);
+          return createJsonResponse({
+            error: 'Internal server error',
+            details: error.message
+          }, 500);
         }
       }
 
-      // Start the API when page loads
       document.addEventListener('DOMContentLoaded', async () => {
-        // Enable debug mode if 'debug' parameter exists
-        window.API_DEBUG_MODE = new URLSearchParams(window.location.search).has('debug');
+        if (!API_CONFIG.debug) {
+          document.body.style.display = 'none';
+        }
         
-        // Handle the API request
-        const response = await handleAPIRequest();
+        const apiResponse = await handleApiRequest();
         
-        // For browser testing (not needed in actual API)
-        if (window.API_DEBUG_MODE) {
-          const data = await response.clone().json();
-          document.body.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+        if (!API_CONFIG.debug) {
+          window.API_RESPONSE = apiResponse;
+          console.log('API response is available as window.API_RESPONSE');
         }
       });
     </script>
